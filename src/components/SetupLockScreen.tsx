@@ -164,11 +164,13 @@ export default function SetupLockScreen({ username, onSetupComplete, onLogout }:
       }
 
       // Save credential ID locally for absolute reliability
-      localStorage.setItem(`memento_lock_credential_id_${username}`, credential.id);
+      const cleanU = username.toLowerCase().trim();
+      localStorage.setItem(`memento_lock_credential_id_${cleanU}`, credential.id);
+      localStorage.setItem(`memento_lock_use_fingerprint_${cleanU}`, "true");
       setIsEnrolled(true);
       setUseFingerprint(true);
       playChime();
-      setSuccessMsg("Fingerprint registered successfully! Biometrics enabled for Lock Screen.");
+      setSuccessMsg("Biometrics registered successfully! Passkey enabled.");
       setTimeout(() => setSuccessMsg(""), 3000);
     } catch (e: any) {
       console.error("Enrollment failed:", e);

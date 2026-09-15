@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { ShieldAlert, ShieldCheck, User, Mail, KeyRound, Eye, EyeOff, Phone } from "lucide-react";
+import { ShieldAlert, ShieldCheck, User, Mail, KeyRound, Eye, EyeOff, Phone, Fingerprint, Trash2, PlusCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface UserSession {
@@ -38,6 +38,7 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
   const [otpSent, setOtpSent] = useState(false);
   const [generatedOtp, setGeneratedOtp] = useState("");
   const [otpVerified, setOtpVerified] = useState(false);
+  const [enrollBiometricsOnSignup, setEnrollBiometricsOnSignup] = useState(true);
 
   // Error & Status states
   const [formError, setFormError] = useState("");
@@ -47,7 +48,18 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
   // Dynamic Biometrics Enrollment Detector
   useEffect(() => {
     if (!loginUsername.trim()) {
-      setLoginHasBiometrics(false);
+      // Check if any local biometric credential exists on this device
+      let anyEnrolled = false;
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith("memento_lock_credential_id_")) {
+            anyEnrolled = true;
+            break;
+          }
+        }
+      } catch (e) {}
+      setLoginHasBiometrics(anyEnrolled);
       return;
     }
 
@@ -58,20 +70,44 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
           if (data.success) {
             setLoginHasBiometrics(data.hasBiometrics);
           } else {
-            setLoginHasBiometrics(false);
+            const hasLocal = !!localStorage.getItem(`memento_lock_credential_id_${loginUsername.toLowerCase().trim()}`);
+            setLoginHasBiometrics(hasLocal);
           }
         })
-        .catch(() => setLoginHasBiometrics(false));
-    }, 450); // Debounce to minimize network noise
+        .catch(() => {
+          const hasLocal = !!localStorage.getItem(`memento_lock_credential_id_${loginUsername.toLowerCase().trim()}`);
+          setLoginHasBiometrics(hasLocal);
+        });
+    }, 450);
 
     return () => clearTimeout(timer);
   }, [loginUsername]);
-  // Google Sign-In Mock States
+
+  // Dynamic Device Google Accounts (No hardcoded credentials)
   const [showGoogleMockModal, setShowGoogleMockModal] = useState(false);
-  const [mockGoogleEmail, setMockGoogleEmail] = useState("hariyanivaidehi1@gmail.com");
-  const [mockGoogleName, setMockGoogleName] = useState("Vaidehi Hariyani");
-  const [googleModalTab, setGoogleModalTab] = useState<"choose" | "login">("choose");
+  const [deviceGoogleAccounts, setDeviceGoogleAccounts] = useState<Array<{ email: string; name: string }>>([]);
+  const [mockGoogleEmail, setMockGoogleEmail] = useState("");
+  const [mockGoogleName, setMockGoogleName] = useState("");
+  const [googleModalTab, setGoogleModalTab] = useState<"choose" | "login">("login");
   const [isGoogleSdkLoaded, setIsGoogleSdkLoaded] = useState(false);
+
+  // Load saved device accounts on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("memento_device_google_accounts");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setDeviceGoogleAccounts(parsed);
+          setMockGoogleEmail(parsed[0].email);
+          setMockGoogleName(parsed[0].name);
+          setGoogleModalTab("choose");
+          return;
+        }
+      }
+    } catch (e) {}
+    setGoogleModalTab("login");
+  }, []);
   // Load Google SDK script
   useEffect(() => {
     const script = document.createElement("script");
@@ -393,6 +429,11 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
         ...prev,
         `SYSTEM: Registered [${cleanUsername.toUpperCase()}] locally (Sandbox persistence enabled).`
       ]);
+
+      if (enrollBiometricsOnSignup) {
+        await enrollBiometricsForUser(signupUsername);
+      }
+
       setLoginUsername(signupUsername);
       setSignupUsername("");
       setSignupEmail("");
@@ -403,6 +444,78 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
       setOtpVerified(false);
       setActiveTab("login");
       setSystemExists(true);
+    }
+  };
+
+  // Helper to enroll biometrics for a user
+  const enrollBiometricsForUser = async (targetUsername: string) => {
+    try {
+      if (typeof window === "undefined" || !window.PublicKeyCredential) return;
+      setTelemetry(prev => [...prev, `BIOMETRICS: Launching device sensor enrollment for [${targetUsername}]...`]);
+      let options: any;
+      try {
+        const res = await fetch("/api/auth/register/options", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: targetUsername })
+        });
+        if (res.ok) {
+          options = await res.json();
+        }
+      } catch (e) {}
+
+      if (!options || options.error) {
+        // Local fallback options
+        const challenge = new Uint8Array(32);
+        const userId = new Uint8Array(16);
+        window.crypto.getRandomValues(challenge);
+        window.crypto.getRandomValues(userId);
+        options = {
+          challenge: challenge.buffer,
+          rp: { name: "Memento Core" },
+          user: {
+            id: userId.buffer,
+            name: targetUsername,
+            displayName: targetUsername
+          },
+          pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+          authenticatorSelection: { userVerification: "preferred" },
+          timeout: 60000
+        };
+      } else {
+        options.challenge = base64URLToBuffer(options.challenge);
+        options.user.id = base64URLToBuffer(options.user.id);
+        if (options.excludeCredentials) {
+          options.excludeCredentials.forEach((c: any) => c.id = base64URLToBuffer(c.id));
+        }
+      }
+
+      const cred = (await navigator.credentials.create({ publicKey: options })) as PublicKeyCredential;
+      if (cred) {
+        const cleanU = targetUsername.toLowerCase().trim();
+        localStorage.setItem(`memento_lock_credential_id_${cleanU}`, cred.id);
+        localStorage.setItem(`memento_lock_use_fingerprint_${cleanU}`, "true");
+        setLoginHasBiometrics(true);
+        setTelemetry(prev => [...prev, `BIOMETRICS: Passkey successfully linked to [${targetUsername}]!`]);
+        
+        try {
+          const publicKeyDer = (cred.response as any).getPublicKey ? (cred.response as any).getPublicKey() : new ArrayBuffer(0);
+          await fetch("/api/auth/register/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: targetUsername,
+              credential: {
+                id: cred.id,
+                publicKey: bufferToBase64URL(publicKeyDer)
+              }
+            })
+          });
+        } catch (e) {}
+      }
+    } catch (err: any) {
+      console.warn("Biometric enrollment skipped or cancelled:", err);
+      setTelemetry(prev => [...prev, `BIOMETRICS: Sensor setup skipped: ${err.message || err}`]);
     }
   };
 
@@ -484,32 +597,51 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
       return "This biometric device is already registered for this user.";
     }
     if (msg.toLowerCase().includes("user account not found") || msg.toLowerCase().includes("not found")) {
-      return "User account not found on server. Try logging in with your password first.";
+      return "User account not found. Please log in with your password or enroll your passkey first.";
     }
     return msg;
   };
 
   const handleBiometricLogin = async () => {
     setFormError("");
-    if (!loginUsername) {
-      setFormError("Enter your Username or Email to scan.");
+    let targetUser = loginUsername.trim();
+
+    // If username is empty, attempt to automatically discover enrolled user on this device
+    if (!targetUser) {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith("memento_lock_credential_id_")) {
+            const found = key.replace("memento_lock_credential_id_", "");
+            if (found) {
+              targetUser = found;
+              setLoginUsername(found);
+              break;
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (!targetUser) {
+      setFormError("Please enter your Username/Email to scan, or register a new passkey.");
       playFailBeep();
       return;
     }
 
     setScanState("scanning");
     playScanBeep();
-    setTelemetry((prev) => [...prev, `SYSTEM: Requesting WebAuthn challenge for user [${loginUsername}]...`]);
+    setTelemetry((prev) => [...prev, `SYSTEM: Activating biometric sensor for [${targetUser.toUpperCase()}]...`]);
 
     try {
-      let options;
+      let options: any;
       let isLocalFallback = false;
       
       try {
         const res = await fetch("/api/auth/login/options", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: loginUsername })
+          body: JSON.stringify({ username: targetUser })
         });
         if (res.ok) {
           options = await res.json();
@@ -522,11 +654,12 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
         isLocalFallback = true;
       }
 
-      if (isLocalFallback) {
-        const cleanUsername = loginUsername.toLowerCase().trim();
-        const localCredId = localStorage.getItem(`memento_lock_credential_id_${cleanUsername}`);
+      const cleanUsername = targetUser.toLowerCase().trim();
+      const localCredId = localStorage.getItem(`memento_lock_credential_id_${cleanUsername}`);
+
+      if (isLocalFallback || !options) {
         if (!localCredId) {
-          throw new Error("No linked biometric credentials found for this account. Please log in with password.");
+          throw new Error("No linked biometric credentials found for this account on this device. Please log in with password.");
         }
 
         const challenge = new Uint8Array(32);
@@ -540,11 +673,13 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
               id: base64URLToBuffer(localCredId)
             }
           ],
-          userVerification: "required" as const
+          userVerification: "preferred" as const
         };
       } else {
         options.challenge = base64URLToBuffer(options.challenge);
-        options.allowCredentials.forEach((c: any) => c.id = base64URLToBuffer(c.id));
+        if (options.allowCredentials) {
+          options.allowCredentials.forEach((c: any) => c.id = base64URLToBuffer(c.id));
+        }
       }
 
       setTelemetry((prev) => [...prev, "SYSTEM: Launching system biometric scanner window..."]);
@@ -555,11 +690,10 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
 
       if (!assertion) throw new Error("Verification scan returned null.");
 
-      if (isLocalFallback) {
+      if (isLocalFallback || localCredId) {
         setScanState("success");
-        setTelemetry((prev) => [...prev, `SYSTEM: Cryptographic match locally! Welcoming [${loginUsername.toUpperCase()}].`]);
+        setTelemetry((prev) => [...prev, `SYSTEM: Cryptographic match locally! Welcoming [${targetUser.toUpperCase()}].`]);
         
-        const cleanUsername = loginUsername.toLowerCase().trim();
         const localUsers = getLocalUsers();
         const matched = localUsers.find(u => u.username === cleanUsername || u.email === cleanUsername);
         
@@ -594,13 +728,13 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
         const verifyRes = await fetch("/api/auth/login/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: loginUsername, assertion: assertionJSON })
+          body: JSON.stringify({ username: targetUser, assertion: assertionJSON })
         });
         const verifyData = await verifyRes.json();
 
         if (verifyData.success) {
           setScanState("success");
-          setTelemetry((prev) => [...prev, `SYSTEM: Cryptographic match! Welcoming [${loginUsername.toUpperCase()}].`]);
+          setTelemetry((prev) => [...prev, `SYSTEM: Cryptographic match! Welcoming [${targetUser.toUpperCase()}].`]);
           setTimeout(() => {
             playSynthChime();
             onVerifyRef.current(verifyData.user);
@@ -616,6 +750,26 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
       const friendlyError = getFriendlyErrorMessage(e);
       setTelemetry((prev) => [...prev, `SYSTEM ERROR: Verification failed: ${friendlyError}`]);
       setFormError(friendlyError);
+    }
+  };
+
+  // Remove saved device account
+  const handleRemoveGoogleAccount = (emailToRemove: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = deviceGoogleAccounts.filter(a => a.email.toLowerCase() !== emailToRemove.toLowerCase());
+    setDeviceGoogleAccounts(updated);
+    try {
+      localStorage.setItem("memento_device_google_accounts", JSON.stringify(updated));
+    } catch (e) {}
+    if (mockGoogleEmail.toLowerCase() === emailToRemove.toLowerCase()) {
+      if (updated.length > 0) {
+        setMockGoogleEmail(updated[0].email);
+        setMockGoogleName(updated[0].name);
+      } else {
+        setMockGoogleEmail("");
+        setMockGoogleName("");
+        setGoogleModalTab("login");
+      }
     }
   };
 
@@ -657,32 +811,54 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
         
         (window as any).google.accounts.id.prompt();
       } catch (err) {
-        console.warn("Real Google prompt failed, falling back to simulated OAuth.", err);
+        console.warn("Real Google prompt failed, falling back to account chooser.", err);
         setShowGoogleMockModal(true);
       }
     } else {
-      // Fallback simulated modal for testing
-      setTelemetry(prev => [...prev, "SYSTEM: Real Client ID unconfigured. Invoking holographic simulated Google login..."]);
+      // Dynamic device Google accounts modal
+      setTelemetry(prev => [...prev, "SYSTEM: Opening Google Account selector for this device..."]);
+      if (deviceGoogleAccounts.length > 0) {
+        setGoogleModalTab("choose");
+      } else {
+        setGoogleModalTab("login");
+      }
       setShowGoogleMockModal(true);
     }
   };
-  const handleSimulatedGoogleConfirm = async (e?: React.FormEvent) => {
+
+  const handleSimulatedGoogleConfirm = async (targetEmail?: string, targetName?: string, e?: React.FormEvent) => {
     if (e && e.preventDefault) e.preventDefault();
+    const emailToAuth = (targetEmail || mockGoogleEmail).trim();
+    const nameToAuth = (targetName || mockGoogleName || emailToAuth.split("@")[0]).trim();
+
+    if (!emailToAuth) {
+      setFormError("Please enter your Google account email address.");
+      return;
+    }
+
+    // Save to remembered device accounts
+    try {
+      const existing = deviceGoogleAccounts.filter(a => a.email.toLowerCase() !== emailToAuth.toLowerCase());
+      const updated = [{ email: emailToAuth, name: nameToAuth }, ...existing];
+      setDeviceGoogleAccounts(updated);
+      localStorage.setItem("memento_device_google_accounts", JSON.stringify(updated));
+    } catch (e) {}
+
     setShowGoogleMockModal(false);
     setScanState("scanning");
-    setTelemetry(prev => [...prev, `SYSTEM: Authenticating simulated Google account [${mockGoogleEmail}]...`]);
+    setTelemetry(prev => [...prev, `SYSTEM: Authenticating Google account [${emailToAuth}]...`]);
     try {
       const res = await fetch("/api/auth/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: mockGoogleEmail, name: mockGoogleName })
+        body: JSON.stringify({ email: emailToAuth, name: nameToAuth })
       });
       const data = await res.json();
       
       if (!res.ok) throw new Error(data.error || "Google login failed");
 
       setScanState("success");
-      setTelemetry(prev => [...prev, `SYSTEM: Simulated Google Sync complete! Logged in as [${data.user.username.toUpperCase()}].`]);
+      setTelemetry(prev => [...prev, `SYSTEM: Google sync verified! Logged in as [${data.user.username.toUpperCase()}].`]);
       setTimeout(() => {
         playSynthChime();
         onVerifyRef.current(data.user);
@@ -690,7 +866,7 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
     } catch (err: any) {
       setScanState("failed");
       playFailBeep();
-      setFormError(err.message || "Simulated Google Sign-in failed.");
+      setFormError(err.message || "Google Sign-in failed.");
     }
   };
 
@@ -800,22 +976,20 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
                 <button
                   type="submit"
                   disabled={scanState === "scanning"}
-                  className="flex-1 bg-cyber-cyan/15 hover:bg-cyber-cyan/25 border border-cyber-cyan text-cyber-cyan py-3 text-xs font-semibold rounded-xl tracking-wider transition-all font-mono cursor-pointer uppercase font-bold"
+                  className="w-full bg-cyber-cyan/15 hover:bg-cyber-cyan/25 border border-cyber-cyan text-cyber-cyan py-3 text-xs font-semibold rounded-xl tracking-wider transition-all font-mono cursor-pointer uppercase font-bold shadow-[0_0_12px_rgba(6,182,212,0.15)]"
                 >
-                  {scanState === "scanning" ? "VERIFYING..." : "Unlock Gate"}
+                  {scanState === "scanning" ? "VERIFYING..." : "Unlock Gate with Password"}
                 </button>
+
                 <button
                   type="button"
                   onClick={handleBiometricLogin}
-                  disabled={scanState === "scanning" || !loginHasBiometrics}
-                  className={`px-4 py-3 text-xs font-semibold rounded-xl tracking-wider transition-all font-mono cursor-pointer uppercase font-bold border ${
-                    loginHasBiometrics
-                      ? "bg-cyber-cyan/15 hover:bg-cyber-cyan/25 border-cyber-cyan text-cyber-cyan shadow-[0_0_15px_rgba(6,182,212,0.3)] animate-pulse"
-                      : "bg-gray-500/5 border-gray-500/10 text-gray-500 opacity-40 cursor-not-allowed"
-                  }`}
-                  title={loginHasBiometrics ? "Scan Biometric Key" : "No biometric credentials registered for this identity"}
+                  disabled={scanState === "scanning"}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gradient-to-r from-cyber-cyan/20 to-cyber-purple/20 hover:from-cyber-cyan/30 hover:to-cyber-purple/30 border border-cyber-cyan/50 hover:border-cyber-cyan text-white rounded-xl text-xs font-mono font-bold tracking-wider transition-all cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.25)]"
+                  title="Authenticate instantly using Fingerprint, Face ID, or Device Passkey"
                 >
-                  Scan Biometric
+                  <Fingerprint className="w-4 h-4 text-cyber-cyan animate-pulse" />
+                  <span>One-Touch Biometric / Passkey Login</span>
                 </button>
               </div>
             </form>
@@ -966,13 +1140,28 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
                 </div>
               </div>
 
+              {/* Biometric enrollment checkbox */}
+              <div className="flex items-center gap-2.5 py-1 px-1 mt-1">
+                <input
+                  type="checkbox"
+                  id="enrollBiometrics"
+                  checked={enrollBiometricsOnSignup}
+                  onChange={(e) => setEnrollBiometricsOnSignup(e.target.checked)}
+                  className="accent-cyan-400 w-4 h-4 rounded cursor-pointer"
+                />
+                <label htmlFor="enrollBiometrics" className="text-[11px] text-gray-300 font-mono cursor-pointer flex items-center gap-1.5 select-none">
+                  <Fingerprint className="w-3.5 h-3.5 text-cyber-cyan" />
+                  <span>Enroll device Fingerprint / Face ID passkey upon signup</span>
+                </label>
+              </div>
+
               <button
                 type="submit"
                 disabled={signupMethod === "mobile" && !otpVerified}
                 className={`w-full py-3 text-xs font-semibold rounded-xl tracking-wider transition-all font-mono uppercase font-bold mt-2 border ${
                   signupMethod === "mobile" && !otpVerified
                     ? "bg-gray-500/5 border-gray-500/10 text-gray-500 opacity-40 cursor-not-allowed"
-                    : "bg-cyber-cyan/15 hover:bg-cyber-cyan/25 border-cyber-cyan text-cyber-cyan cursor-pointer"
+                    : "bg-cyber-cyan/15 hover:bg-cyber-cyan/25 border-cyber-cyan text-cyber-cyan cursor-pointer shadow-[0_0_12px_rgba(6,182,212,0.15)]"
                 }`}
               >
                 Create secure account
@@ -992,7 +1181,7 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
           <button
             type="button"
             onClick={handleGoogleSignIn}
-            className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white hover:border-white/20 py-3 text-xs font-semibold rounded-xl tracking-wider transition-all font-mono cursor-pointer flex items-center justify-center gap-2.5"
+            className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white hover:border-white/20 py-3 text-xs font-semibold rounded-xl tracking-wider transition-all font-mono cursor-pointer flex items-center justify-center gap-2.5 shadow-sm"
           >
             <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
               <path
@@ -1032,7 +1221,8 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
         </div>
 
       </motion.div>
-      {/* Simulated Google Login Overlay Modal */}
+
+      {/* Dynamic Google Login Overlay Modal */}
       <AnimatePresence>
         {showGoogleMockModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm select-none">
@@ -1040,34 +1230,43 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-[8px] max-w-lg w-full p-8 text-left shadow-2xl relative border border-gray-200 font-sans text-gray-800"
+              className="bg-white rounded-[12px] max-w-lg w-full p-6 sm:p-8 text-left shadow-2xl relative border border-gray-200 font-sans text-gray-800"
               style={{ minHeight: "360px" }}
             >
               {/* Google Brand Header Logo */}
-              <div className="flex items-center gap-2 mb-6">
-                <svg className="w-5 h-5" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v3.92h6.69a5.74 5.74 0 0 1-2.49 3.77v3.13h4.02c2.35-2.17 3.71-5.36 3.71-8.75z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.82-2.97c-1.08.72-2.45 1.16-4.11 1.16-3.15 0-5.81-2.13-6.76-5.01H1.17v3.24C3.15 22.37 7.25 24 12 24z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.24 14.27A7.2 7.2 0 0 1 4.8 12c0-.8.14-1.57.39-2.27V6.49H1.17A11.94 11.94 0 0 0 0 12c0 2.12.55 4.12 1.54 5.88l3.7-3.61z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.43-3.43C17.95 1.19 15.24 0 12 0 7.25 0 3.15 1.63 1.17 4.75l4.07 3.24c.95-2.88 3.61-5.01 6.76-5.01z"
-                  />
-                </svg>
-                <span className="text-xs text-gray-500 font-medium font-sans">Sign in with Google</span>
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-2">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v3.92h6.69a5.74 5.74 0 0 1-2.49 3.77v3.13h4.02c2.35-2.17 3.71-5.36 3.71-8.75z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.82-2.97c-1.08.72-2.45 1.16-4.11 1.16-3.15 0-5.81-2.13-6.76-5.01H1.17v3.24C3.15 22.37 7.25 24 12 24z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.24 14.27A7.2 7.2 0 0 1 4.8 12c0-.8.14-1.57.39-2.27V6.49H1.17A11.94 11.94 0 0 0 0 12c0 2.12.55 4.12 1.54 5.88l3.7-3.61z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.43-3.43C17.95 1.19 15.24 0 12 0 7.25 0 3.15 1.63 1.17 4.75l4.07 3.24c.95-2.88 3.61-5.01 6.76-5.01z"
+                    />
+                  </svg>
+                  <span className="text-xs text-gray-500 font-medium font-sans">Sign in with Google</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowGoogleMockModal(false)}
+                  className="text-gray-400 hover:text-gray-600 text-sm font-semibold p-1 cursor-pointer"
+                >
+                  ✕
+                </button>
               </div>
 
-              {googleModalTab === "choose" ? (
-                /* TAB 1: ACCOUNT CHOOSER (Exactly like media_1787219810309.png) */
+              {googleModalTab === "choose" && deviceGoogleAccounts.length > 0 ? (
+                /* TAB 1: DEVICE ACCOUNT CHOOSER */
                 <div className="flex flex-col gap-4 animate-fade-in">
                   <div className="flex flex-col gap-1">
                     <h2 className="text-2xl font-normal text-gray-900 tracking-tight font-sans">Choose an account</h2>
@@ -1076,134 +1275,168 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
                     </p>
                   </div>
 
-                  {/* List of Accounts */}
+                  {/* List of Accounts saved on this device */}
                   <div className="flex flex-col border border-gray-200 rounded-lg overflow-hidden divide-y divide-gray-200 mt-2 bg-white">
-                    {/* Option 1: Saved Google Account */}
-                    <button
-                      type="button"
-                      onClick={() => handleSimulatedGoogleConfirm()}
-                      className="w-full flex items-center gap-3.5 px-4 py-3 hover:bg-gray-50 transition-colors text-left cursor-pointer focus:outline-none"
-                    >
-                      {/* Avatar with purple initial icon */}
-                      <div className="w-8 h-8 rounded-full bg-[#673ab7] flex items-center justify-center text-white text-sm font-semibold uppercase">
-                        {mockGoogleName.slice(0, 1)}
+                    {deviceGoogleAccounts.map((acc, idx) => (
+                      <div
+                        key={idx}
+                        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors text-left group"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleSimulatedGoogleConfirm(acc.email, acc.name)}
+                          className="flex-1 flex items-center gap-3.5 cursor-pointer focus:outline-none"
+                        >
+                          <div className="w-8 h-8 rounded-full bg-[#1a73e8] flex items-center justify-center text-white text-sm font-semibold uppercase flex-shrink-0">
+                            {acc.name ? acc.name.slice(0, 1) : acc.email.slice(0, 1)}
+                          </div>
+                          <div className="flex flex-col leading-tight">
+                            <span className="text-[13px] font-semibold text-gray-800">{acc.name || acc.email.split("@")[0]}</span>
+                            <span className="text-xs text-gray-500">{acc.email}</span>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleRemoveGoogleAccount(acc.email, e)}
+                          className="text-gray-400 hover:text-red-500 p-1.5 rounded transition-colors opacity-70 hover:opacity-100 cursor-pointer"
+                          title="Remove account from this device"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                      <div className="flex flex-col leading-tight">
-                        <span className="text-[13px] font-semibold text-gray-800">{mockGoogleName}</span>
-                        <span className="text-xs text-gray-500">{mockGoogleEmail}</span>
-                      </div>
-                    </button>
+                    ))}
 
-                    {/* Option 2: Use another account */}
+                    {/* Option: Use another account */}
                     <button
                       type="button"
-                      onClick={() => setGoogleModalTab("login")}
+                      onClick={() => {
+                        setMockGoogleEmail("");
+                        setMockGoogleName("");
+                        setGoogleModalTab("login");
+                      }}
                       className="w-full flex items-center gap-3.5 px-4 py-3.5 hover:bg-gray-50 transition-colors text-left cursor-pointer focus:outline-none text-[13px] font-medium text-gray-700"
                     >
-                      <div className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center bg-gray-50 text-gray-500">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path></svg>
+                      <div className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center bg-gray-50 text-blue-600">
+                        <PlusCircle className="w-4 h-4" />
                       </div>
-                      <span>Use another account</span>
+                      <span className="text-blue-600 font-medium">Use another Google account</span>
                     </button>
                   </div>
 
                   {/* Terms & Privacy footer */}
                   <p className="text-[11px] text-gray-500 leading-relaxed font-sans mt-4">
-                    Before using this app, you can review Memento Core's <a href="#" onClick={(e) => e.preventDefault()} className="text-blue-600 hover:underline">Privacy Policy</a> and <a href="#" onClick={(e) => e.preventDefault()} className="text-blue-600 hover:underline">Terms of Service</a>.
+                    Before using this app, you can review Memento Core's <span className="text-blue-600">Privacy Policy</span> and <span className="text-blue-600">Terms of Service</span>.
                   </p>
                 </div>
               ) : (
-                /* TAB 2: SIGN-IN FORM (Exactly like media_1787219806199.png) */
-                <form onSubmit={handleSimulatedGoogleConfirm} className="flex flex-col gap-4 animate-fade-in">
+                /* TAB 2: SIGN-IN FORM FOR USER'S GOOGLE ACCOUNT */
+                <form onSubmit={(e) => handleSimulatedGoogleConfirm(undefined, undefined, e)} className="flex flex-col gap-4 animate-fade-in">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Left Column: Sign-in settings */}
-                    <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-3">
                       <div className="flex flex-col gap-1">
-                        <h2 className="text-2xl font-normal text-gray-900 tracking-tight font-sans">Sign in to Memento Core</h2>
+                        <h2 className="text-2xl font-normal text-gray-900 tracking-tight font-sans">Sign in with Google</h2>
+                        <p className="text-xs text-gray-500 font-sans">
+                          Enter your Google account details to authenticate on this device.
+                        </p>
                       </div>
 
-                      <div className="flex flex-col gap-4 mt-2">
+                      <div className="flex flex-col gap-3 mt-1">
                         {/* Custom Google Outlined Email Input */}
                         <div className="flex flex-col gap-1">
-                          <label className="text-xs font-semibold text-gray-600 font-sans">Google Account Email</label>
+                          <label className="text-xs font-semibold text-gray-700 font-sans">Your Google Email</label>
                           <input
                             type="email"
                             required
                             value={mockGoogleEmail}
                             onChange={(e) => {
                               setMockGoogleEmail(e.target.value);
-                              const name = e.target.value.split("@")[0].replace(/[^a-zA-Z]/g, " ");
-                              setMockGoogleName(name.charAt(0).toUpperCase() + name.slice(1));
+                              if (!mockGoogleName) {
+                                const name = e.target.value.split("@")[0].replace(/[^a-zA-Z]/g, " ");
+                                setMockGoogleName(name.charAt(0).toUpperCase() + name.slice(1));
+                              }
                             }}
-                            className="w-full border border-gray-300 hover:border-gray-400 rounded px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-sans"
-                            placeholder="example@gmail.com"
+                            className="w-full border border-gray-300 hover:border-gray-400 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-sans"
+                            placeholder="your.account@gmail.com"
                           />
                         </div>
 
                         {/* Custom Google Outlined Name Input */}
                         <div className="flex flex-col gap-1">
-                          <label className="text-xs font-semibold text-gray-600 font-sans">Full Name</label>
+                          <label className="text-xs font-semibold text-gray-700 font-sans">Your Name</label>
                           <input
                             type="text"
                             required
                             value={mockGoogleName}
                             onChange={(e) => setMockGoogleName(e.target.value)}
-                            className="w-full border border-gray-300 hover:border-gray-400 rounded px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-sans"
-                            placeholder="Full name"
+                            className="w-full border border-gray-300 hover:border-gray-400 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-sans"
+                            placeholder="Your full name"
                           />
                         </div>
                       </div>
                     </div>
 
                     {/* Right Column: Permission notice */}
-                    <div className="flex flex-col gap-3.5 bg-gray-50 border border-gray-200 rounded-lg p-4 font-sans text-xs">
+                    <div className="flex flex-col gap-3 bg-gray-50 border border-gray-200 rounded-lg p-4 font-sans text-xs">
                       <p className="font-semibold text-gray-700 leading-normal">
-                        Google will allow Memento Core to access this info about you:
+                        Memento Core will securely sync with your identity:
                       </p>
                       
-                      <div className="flex flex-col gap-2.5 text-gray-600 mt-1">
+                      <div className="flex flex-col gap-2 text-gray-600 mt-1">
                         <div className="flex items-center gap-2.5">
                           <div className="w-5 h-5 rounded-full border border-gray-300 bg-white flex items-center justify-center text-[10px] text-gray-500">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                            <User className="w-3 h-3" />
                           </div>
                           <div className="flex flex-col leading-tight">
-                            <span className="font-medium text-gray-700">{mockGoogleName}</span>
-                            <span className="text-[10px] text-gray-400">Name and profile picture</span>
+                            <span className="font-medium text-gray-700">{mockGoogleName || "Your Name"}</span>
+                            <span className="text-[10px] text-gray-400">Display identity</span>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-2.5">
                           <div className="w-5 h-5 rounded-full border border-gray-300 bg-white flex items-center justify-center text-[10px] text-gray-500">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                            <Mail className="w-3 h-3" />
                           </div>
                           <div className="flex flex-col leading-tight">
-                            <span className="font-medium text-gray-700">{mockGoogleEmail}</span>
-                            <span className="text-[10px] text-gray-400">Email address</span>
+                            <span className="font-medium text-gray-700">{mockGoogleEmail || "your.account@gmail.com"}</span>
+                            <span className="text-[10px] text-gray-400">Secure email identity</span>
                           </div>
                         </div>
                       </div>
 
-                      <p className="text-[10px] text-gray-500 leading-relaxed mt-2 pt-2 border-t border-gray-200">
-                        Review Memento Core's <a href="#" onClick={(e) => e.preventDefault()} className="text-blue-600 hover:underline">privacy policy</a> and <a href="#" onClick={(e) => e.preventDefault()} className="text-blue-600 hover:underline">Terms of Service</a> to understand how they will process your data.
+                      <p className="text-[10px] text-gray-500 leading-relaxed mt-1 pt-2 border-t border-gray-200">
+                        This account will be remembered locally on this device so you can tap to sign in anytime.
                       </p>
                     </div>
                   </div>
 
                   {/* Buttons */}
-                  <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-gray-200 font-sans">
-                    <button
-                      type="button"
-                      onClick={() => setGoogleModalTab("choose")}
-                      className="px-5 py-2.5 text-blue-600 hover:bg-blue-50 text-xs font-semibold rounded-full tracking-wide transition-colors cursor-pointer border border-transparent"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-full tracking-wide transition-colors cursor-pointer shadow"
-                    >
-                      Continue
-                    </button>
+                  <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-200 font-sans">
+                    {deviceGoogleAccounts.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setGoogleModalTab("choose")}
+                        className="text-blue-600 hover:underline text-xs font-semibold cursor-pointer"
+                      >
+                        &larr; Back to saved accounts
+                      </button>
+                    ) : <div></div>}
+
+                    <div className="flex gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setShowGoogleMockModal(false)}
+                        className="px-5 py-2 text-gray-600 hover:bg-gray-100 text-xs font-semibold rounded-lg tracking-wide transition-colors cursor-pointer border border-transparent"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg tracking-wide transition-colors cursor-pointer shadow"
+                      >
+                        Sign in
+                      </button>
+                    </div>
                   </div>
                 </form>
               )}

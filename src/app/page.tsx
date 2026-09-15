@@ -327,6 +327,15 @@ export default function Home() {
     tags: string[];
     wing: string;
     pointer: string;
+    mainTopic?: string;
+    subtopic?: string;
+    attachments?: Array<{
+      type: "image" | "video" | "audio" | "file";
+      name: string;
+      url: string;
+      size?: string;
+    }>;
+    voiceNote?: string;
   }) => {
     if (!currentUser) return;
     const x = Math.random() * 800 + 100;
@@ -953,7 +962,11 @@ export default function Home() {
                 )}
 
                 {activeTab === "editor" && (
-                  <MemoirDeckView onAddMemory={handleAddMemory} />
+                  <MemoirDeckView
+                    memories={memories}
+                    onAddMemory={handleAddMemory}
+                    onDeleteMemory={handleDeleteMemory}
+                  />
                 )}
 
                 {activeTab === "mirror" && (

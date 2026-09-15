@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     
     // Validate inputs
-    const { title, content, emotion, tags, x, y, z, username, wing, pointer } = body;
+    const { title, content, emotion, tags, x, y, z, username, wing, pointer, mainTopic, subtopic, attachments, voiceNote } = body;
     if (!title || !content || !username) {
       return NextResponse.json(
         { success: false, error: "Missing required fields: title, content, and username" },
@@ -47,6 +47,10 @@ export async function POST(request: Request) {
       emotion: emotion || "serene",
       tags: tags || [],
       wing: wing || "PERSONAL",
+      mainTopic: mainTopic || "General",
+      subtopic: subtopic || "",
+      attachments: attachments || [],
+      voiceNote: voiceNote || "",
       pointer,
       x: x !== undefined ? x : Math.random() * 800 + 100,
       y: y !== undefined ? y : Math.random() * 500 + 100,

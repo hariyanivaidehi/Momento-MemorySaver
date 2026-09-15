@@ -15,6 +15,15 @@ export interface CanvasMemory {
   wing?: string;
   room?: string;
   pointer?: string;
+  mainTopic?: string;
+  subtopic?: string;
+  attachments?: Array<{
+    type: "image" | "video" | "audio" | "file";
+    name: string;
+    url: string;
+    size?: string;
+  }>;
+  voiceNote?: string;
 }
 
 interface ConstellationCanvasProps {
@@ -348,6 +357,16 @@ export default function ConstellationCanvas({ memories, onSelectMemory, isDefrag
             ctx.lineTo(p2.x, p2.y);
             ctx.stroke();
             ctx.setLineDash([]); // Reset dash pattern
+          }
+
+          // Connect stars that belong to the same Main Topic (hierarchical cluster)
+          if (p1.memory.mainTopic && p2.memory.mainTopic && p1.memory.mainTopic === p2.memory.mainTopic && p1.memory.mainTopic !== "General") {
+            ctx.lineWidth = 1.2;
+            ctx.strokeStyle = "rgba(16, 185, 129, 0.35)"; // Emerald neural pathway
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
           }
         }
       }
