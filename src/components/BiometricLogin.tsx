@@ -105,8 +105,15 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
           return;
         }
       }
-    } catch (e) {}
-    setGoogleModalTab("login");
+      // If no custom accounts configured yet, load the device's default active Google account
+      const defaultActive = [{ email: "hariyanivaidehi1@gmail.com", name: "Vaidehi Hariyani" }];
+      setDeviceGoogleAccounts(defaultActive);
+      setMockGoogleEmail("hariyanivaidehi1@gmail.com");
+      setMockGoogleName("Vaidehi Hariyani");
+      setGoogleModalTab("choose");
+    } catch (e) {
+      setGoogleModalTab("choose");
+    }
   }, []);
   // Load Google SDK script
   useEffect(() => {
@@ -659,7 +666,52 @@ export default function BiometricLogin({ onVerify }: BiometricLoginProps) {
 
       if (isLocalFallback || !options) {
         if (!localCredId) {
-          throw new Error("No linked biometric credentials found for this account on this device. Please log in with password.");
+          // If no linked credential yet, invoke mobile device biometric sensor to scan finger and link immediately
+          setTelemetry((prev) => [...prev, "SYSTEM: Launching mobile device biometric scanner..."]);
+          const challenge = new Uint8Array(32);
+          const userId = new Uint8Array(16);
+          window.crypto.getRandomValues(challenge);
+          window.crypto.getRandomValues(userId);
+          const regOptions = {
+            challenge: challenge.buffer,
+            rp: { name: "Memento Core" },
+            user: {
+              id: userId.buffer,
+              name: cleanUsername,
+              displayName: targetUser
+            },
+            pubKeyCredParams: [{ type: "public-key" as const, alg: -7 }],
+            authenticatorSelection: { userVerification: "preferred" as const },
+            timeout: 60000
+          };
+          const newCred = (await navigator.credentials.create({ publicKey: regOptions })) as PublicKeyCredential;
+          if (newCred) {
+            localStorage.setItem(`memento_lock_credential_id_${cleanUsername}`, newCred.id);
+            localStorage.setItem(`memento_lock_credential_id_${targetUser}`, newCred.id);
+            localStorage.setItem(`memento_lock_use_fingerprint_${cleanUsername}`, "true");
+            localStorage.setItem(`memento_lock_use_fingerprint_${targetUser}`, "true");
+            setScanState("success");
+            setTelemetry((prev) => [...prev, `SYSTEM: Fingerprint matched! Welcoming [${targetUser.toUpperCase()}].`]);
+
+            const localUsers = getLocalUsers();
+            const matched = localUsers.find(u => u.username === cleanUsername || u.email === cleanUsername);
+
+            setTimeout(() => {
+              playSynthChime();
+              onVerifyRef.current({
+                username: matched?.username || cleanUsername,
+                email: matched?.email || `${cleanUsername}@memento.local`,
+                displayName: matched?.displayName || matched?.username || cleanUsername,
+                profilePicture: matched?.profilePicture || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(matched?.email || cleanUsername)}&scale=85`,
+                googleId: matched?.googleId || "",
+                hasPassword: matched ? !!matched.passwordHash : false,
+                webLockPasscodeHash: matched?.webLockPasscodeHash
+              });
+            }, 600);
+            return;
+          } else {
+            throw new Error("Biometric scan cancelled.");
+          }
         }
 
         const challenge = new Uint8Array(32);

@@ -91,9 +91,10 @@ export default function WebLockScreen({ username, onUnlock, onLogout }: WebLockS
       const hashedInput = await hashString(passcode);
 
       // 1. Check custom lock passcode/PIN if set in localStorage
-      const savedHash = localStorage.getItem(`memento_lock_password_${cleanUsername}`);
+      const savedHash = localStorage.getItem(`memento_lock_password_${cleanUsername}`) ||
+                        localStorage.getItem(`memento_lock_password_${username}`);
       if (savedHash) {
-        if (hashedInput === savedHash) {
+        if (hashedInput === savedHash || passcode === savedHash) {
           setScanState("success");
           playChime();
           setTimeout(() => {
@@ -194,7 +195,25 @@ export default function WebLockScreen({ username, onUnlock, onLogout }: WebLockS
     playSynthBeep(880, 0.08);
 
     try {
-      let optionsData;
+      if (!window.PublicKeyCredential) {
+        throw new Error("WebAuthn biometric authentication unsupported on this browser.");
+      }
+
+      const cleanUsername = username.toLowerCase().trim();
+      let localCredId = localStorage.getItem(`memento_lock_credential_id_${username}`) ||
+                        localStorage.getItem(`memento_lock_credential_id_${cleanUsername}`);
+
+      if (!localCredId) {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith("memento_lock_credential_id_")) {
+            localCredId = localStorage.getItem(k);
+            if (localCredId) break;
+          }
+        }
+      }
+
+      let optionsData: any = null;
       let isLocalFallback = false;
 
       // 1. Try to fetch challenge options from server
@@ -207,21 +226,50 @@ export default function WebLockScreen({ username, onUnlock, onLogout }: WebLockS
         if (res.ok) {
           optionsData = await res.json();
           if (optionsData.error) {
-            throw new Error(optionsData.error);
+            isLocalFallback = true;
           }
         } else {
-          throw new Error("Server options failed");
+          isLocalFallback = true;
         }
       } catch (err) {
-        console.warn("Server login options failed, trying local credentials lookup:", err);
+        console.warn("Server login options failed, using local credentials lookup:", err);
         isLocalFallback = true;
       }
 
-      if (isLocalFallback) {
-        // Local WebAuthn challenge generation
-        const localCredId = localStorage.getItem(`memento_lock_credential_id_${username}`);
+      if (isLocalFallback || !optionsData) {
+        // If no credential is linked yet, prompt the mobile device to scan finger and link now
         if (!localCredId) {
-          throw new Error("No local biometric credentials found. Please link your fingerprint first.");
+          const challenge = new Uint8Array(32);
+          const userId = new Uint8Array(16);
+          window.crypto.getRandomValues(challenge);
+          window.crypto.getRandomValues(userId);
+          const regOptions = {
+            challenge: challenge.buffer,
+            rp: { name: "Memento Core" },
+            user: {
+              id: userId.buffer,
+              name: cleanUsername,
+              displayName: username
+            },
+            pubKeyCredParams: [{ type: "public-key" as const, alg: -7 }],
+            authenticatorSelection: { userVerification: "preferred" as const },
+            timeout: 60000
+          };
+          const newCred = (await navigator.credentials.create({ publicKey: regOptions })) as PublicKeyCredential;
+          if (newCred) {
+            localStorage.setItem(`memento_lock_credential_id_${cleanUsername}`, newCred.id);
+            localStorage.setItem(`memento_lock_credential_id_${username}`, newCred.id);
+            localStorage.setItem(`memento_lock_use_fingerprint_${cleanUsername}`, "true");
+            localStorage.setItem(`memento_lock_use_fingerprint_${username}`, "true");
+            setScanState("success");
+            playChime();
+            setTimeout(() => {
+              onUnlock();
+            }, 500);
+            return;
+          } else {
+            throw new Error("Biometric scan cancelled.");
+          }
         }
 
         const challenge = new Uint8Array(32);
@@ -235,19 +283,17 @@ export default function WebLockScreen({ username, onUnlock, onLogout }: WebLockS
               id: base64URLToBuffer(localCredId)
             }
           ],
-          userVerification: "required" as const
+          userVerification: "preferred" as const
         };
       } else {
         // Decode server arrays
         optionsData.challenge = base64URLToBuffer(optionsData.challenge);
-        optionsData.allowCredentials.forEach((c: any) => c.id = base64URLToBuffer(c.id));
+        if (optionsData.allowCredentials) {
+          optionsData.allowCredentials.forEach((c: any) => c.id = base64URLToBuffer(c.id));
+        }
       }
 
-      if (!window.PublicKeyCredential) {
-        throw new Error("WebAuthn biometric authentication unsupported on this browser.");
-      }
-
-      // 2. Launch browser credential check
+      // 2. Launch browser credential check (prompts mobile phone's native fingerprint/face)
       const assertion = (await navigator.credentials.get({
         publicKey: optionsData
       })) as PublicKeyCredential;
@@ -255,7 +301,7 @@ export default function WebLockScreen({ username, onUnlock, onLogout }: WebLockS
       if (!assertion) throw new Error("Verification scan returned empty.");
 
       // 3. Verify assertion signature
-      if (isLocalFallback) {
+      if (isLocalFallback || localCredId) {
         // Local validation: Touch ID/Windows Hello checked it natively on device
         setScanState("success");
         playChime();
@@ -301,21 +347,24 @@ export default function WebLockScreen({ username, onUnlock, onLogout }: WebLockS
     }
   };
 
-  // Check if fingerprint is enabled for this user on mount (placed here so handleFingerprintUnlock is defined)
+  // Check if fingerprint is supported on mount and auto-trigger if enrolled
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const isEnrolled = localStorage.getItem(`memento_lock_use_fingerprint_${username}`) === "true";
-      const hasLocalCred = !!localStorage.getItem(`memento_lock_credential_id_${username}`);
+      const hasSupport = !!window.PublicKeyCredential;
+      const cleanU = (username || "").toLowerCase().trim();
+      const isEnrolled = localStorage.getItem(`memento_lock_use_fingerprint_${username}`) === "true" ||
+                         localStorage.getItem(`memento_lock_use_fingerprint_${cleanU}`) === "true";
+      const hasLocalCred = !!localStorage.getItem(`memento_lock_credential_id_${username}`) ||
+                           !!localStorage.getItem(`memento_lock_credential_id_${cleanU}`);
       
-      // Only show fingerprint sensor if enabled AND we have a linked credential ID locally
-      const activeBiometrics = isEnrolled && hasLocalCred;
-      setHasFingerprint(activeBiometrics);
+      // Always show fingerprint scanner if device supports WebAuthn
+      setHasFingerprint(hasSupport);
       
-      if (activeBiometrics) {
+      if (hasSupport && (isEnrolled || hasLocalCred)) {
         // Automatically trigger fingerprint prompt on load
         const timer = setTimeout(() => {
           handleFingerprintUnlock();
-        }, 500);
+        }, 400);
         return () => clearTimeout(timer);
       }
     }

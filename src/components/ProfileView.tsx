@@ -232,8 +232,11 @@ export default function ProfileView({
       } catch (err) {
         console.warn("Server validation failed/offline, fallback to local storage:", err);
       }
+      const cleanU = username.toLowerCase().trim();
       localStorage.setItem(`memento_lock_credential_id_${username}`, credential.id);
+      localStorage.setItem(`memento_lock_credential_id_${cleanU}`, credential.id);
       localStorage.setItem(`memento_lock_use_fingerprint_${username}`, "true");
+      localStorage.setItem(`memento_lock_use_fingerprint_${cleanU}`, "true");
       setUseFingerprintForLock(true);
       setIsEnrolled(true);
       alert("Fingerprint registered successfully! Biometric lock is now active.");
@@ -429,8 +432,11 @@ export default function ProfileView({
     }
 
     const hashed = await hashString(lockPasscode);
+    const cleanU = currentUser.username.toLowerCase().trim();
     localStorage.setItem(`memento_lock_password_${currentUser.username}`, hashed);
+    localStorage.setItem(`memento_lock_password_${cleanU}`, hashed);
     localStorage.removeItem(`memento_lock_disabled_${currentUser.username}`);
+    localStorage.removeItem(`memento_lock_disabled_${cleanU}`);
     setIsLockConfigured(true);
     setIsLockDisabled(false);
     setLockPasscode("");

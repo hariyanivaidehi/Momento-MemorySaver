@@ -120,25 +120,31 @@ export default function Home() {
   }) => {
     setCurrentUser(session);
     localStorage.setItem("memento_session", JSON.stringify(session));
-        // Sync web lock passcode hash from session if it exists
+    const cleanU = session.username.toLowerCase().trim();
+
+    // Sync web lock passcode hash from session if it exists on server
     if (session.webLockPasscodeHash) {
       localStorage.setItem(`memento_lock_password_${session.username}`, session.webLockPasscodeHash);
+      localStorage.setItem(`memento_lock_password_${cleanU}`, session.webLockPasscodeHash);
       localStorage.removeItem(`memento_lock_disabled_${session.username}`);
-    } else {
-      localStorage.removeItem(`memento_lock_password_${session.username}`);
-      localStorage.setItem(`memento_lock_disabled_${session.username}`, "true");
+      localStorage.removeItem(`memento_lock_disabled_${cleanU}`);
     }
+    // Do NOT remove local passcode if session.webLockPasscodeHash is empty, preserve local passcode!
+
     // On fresh login, do not prompt for lock screen immediately
     setIsLocked(false);
     localStorage.setItem(`memento_is_locked_${session.username}`, "false");
+    localStorage.setItem(`memento_is_locked_${cleanU}`, "false");
     
     playSynthSFX("success");
   }, [playSynthSFX]);
 
   const handleLockWeb = React.useCallback(() => {
     if (!currentUser) return;
+    const cleanU = currentUser.username.toLowerCase().trim();
     setIsLocked(true);
     localStorage.setItem(`memento_is_locked_${currentUser.username}`, "true");
+    localStorage.setItem(`memento_is_locked_${cleanU}`, "true");
     playSynthSFX("alert");
   }, [currentUser, playSynthSFX]);
 
@@ -205,17 +211,26 @@ export default function Home() {
       try {
         const session = JSON.parse(saved);
         setCurrentUser(session);
-                // Auto-lock site on reload/refresh if a passcode PIN is configured
-        const isLockDisabled = localStorage.getItem(`memento_lock_disabled_${session.username}`) === "true";
-        const hasPasscode = localStorage.getItem(`memento_lock_password_${session.username}`);
-        if (!isLockDisabled && hasPasscode && hasPasscode !== "undefined" && hasPasscode !== "null") {
+                // Auto-lock site on reload/refresh if a passcode PIN is configured or explicitly locked
+        const cleanU = session.username.toLowerCase().trim();
+        const isLockDisabled = localStorage.getItem(`memento_lock_disabled_${session.username}`) === "true" ||
+                               localStorage.getItem(`memento_lock_disabled_${cleanU}`) === "true";
+        const hasPasscode = localStorage.getItem(`memento_lock_password_${session.username}`) ||
+                            localStorage.getItem(`memento_lock_password_${cleanU}`);
+        const wasExplicitlyLocked = localStorage.getItem(`memento_is_locked_${session.username}`) === "true" ||
+                                   localStorage.getItem(`memento_is_locked_${cleanU}`) === "true";
+
+        if (!isLockDisabled && (hasPasscode || wasExplicitlyLocked)) {
           setIsLocked(true);
           localStorage.setItem(`memento_is_locked_${session.username}`, "true");
+          localStorage.setItem(`memento_is_locked_${cleanU}`, "true");
         } else {
           setIsLocked(false);
           localStorage.setItem(`memento_is_locked_${session.username}`, "false");
+          localStorage.setItem(`memento_is_locked_${cleanU}`, "false");
         }
-        // Fetch fresh user profile from database to sync webLockPasscodeHash
+
+        // Fetch fresh user profile from database to sync webLockPasscodeHash without wiping local passcode
         fetch(`/api/auth/update-profile?username=${encodeURIComponent(session.username)}`)
           .then(res => {
             if (res.ok) return res.json();
@@ -228,9 +243,9 @@ export default function Home() {
               localStorage.setItem("memento_session", JSON.stringify(freshSession));
               if (freshSession.webLockPasscodeHash) {
                 localStorage.setItem(`memento_lock_password_${freshSession.username}`, freshSession.webLockPasscodeHash);
+                localStorage.setItem(`memento_lock_password_${cleanU}`, freshSession.webLockPasscodeHash);
                 localStorage.removeItem(`memento_lock_disabled_${freshSession.username}`);
-              } else {
-                localStorage.removeItem(`memento_lock_password_${freshSession.username}`);
+                localStorage.removeItem(`memento_lock_disabled_${cleanU}`);
               }
             }
           })
@@ -657,6 +672,16 @@ export default function Home() {
               </>
             )}
           </div>
+
+          {/* Quick Lock Web Screen button */}
+          <button
+            onClick={handleLockWeb}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-cyber-cyan/30 bg-cyber-bg hover:bg-cyber-cyan/15 hover:border-cyber-cyan text-cyber-cyan text-xs font-mono transition-all cursor-pointer shadow-[0_0_10px_rgba(6,182,212,0.1)] select-none"
+            title="Lock Session (Passcode & Biometrics required to re-enter)"
+          >
+            <Lock className="w-3.5 h-3.5 animate-pulse" />
+            <span className="hidden sm:inline font-bold uppercase tracking-wider">Lock</span>
+          </button>
 
           {/* User Profile Avatar button */}
           <button
