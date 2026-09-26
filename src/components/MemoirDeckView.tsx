@@ -89,12 +89,12 @@ const EXISTENTIAL_PROMPTS = [
 ];
 
 const DEFAULT_MAIN_TOPICS = [
-  "School & Education",
-  "Family & Childhood",
-  "Friendships & Bonds",
-  "Career & Achievements",
-  "Travel & Adventures",
-  "Personal Milestones"
+  "School",
+  "College",
+  "Family",
+  "Friendships",
+  "Career",
+  "Travel"
 ];
 
 const EMOTIONS = [
@@ -130,7 +130,7 @@ export default function MemoirDeckView({ memories = [], initialView = "create", 
 
   // --- Form State ---
   const [promptIndex, setPromptIndex] = useState(0);
-  const [mainTopic, setMainTopic] = useState("School & Education");
+  const [mainTopic, setMainTopic] = useState("School");
   const [customMainTopic, setCustomMainTopic] = useState("");
   const [subtopic, setSubtopic] = useState("");
   const [title, setTitle] = useState("");
@@ -434,10 +434,14 @@ export default function MemoirDeckView({ memories = [], initialView = "create", 
   // --- Submit Handler ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || !content.trim()) return;
+    const effectiveMainTopic = customMainTopic.trim() || mainTopic || "School";
+    const effectiveSubtopic = subtopic.trim() || title.trim() || "Sub-Memory";
+    const effectiveTitle = title.trim() || subtopic.trim() || "Untitled Memory";
 
-    const effectiveMainTopic = customMainTopic.trim() || mainTopic;
-    const effectiveSubtopic = subtopic.trim() || title.trim();
+    if (!effectiveSubtopic.trim() || !content.trim()) {
+      alert("Please enter a sub-memory name and content.");
+      return;
+    }
 
     setSyncState("saving");
     playSynthChirp(330, 1.5, 0.1);
@@ -455,7 +459,7 @@ export default function MemoirDeckView({ memories = [], initialView = "create", 
       const pointer = `§ W-${wing}/T-${effectiveMainTopic.replace(/\s+/g, "_").slice(0, 8)}/R-${monthDay}/D-${randomId} @t ${cleanTags || "null"} @d ${dateStr} §`;
 
       await onAddMemory({
-        title,
+        title: effectiveTitle,
         content,
         emotion,
         tags,
@@ -1144,12 +1148,31 @@ export default function MemoirDeckView({ memories = [], initialView = "create", 
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-            {/* 1. Main Topic Selector & Custom Input */}
-            <div className="flex flex-col gap-2 bg-cyber-bg/40 p-4 rounded-xl border border-cyber-cyan/10">
-              <label className="text-xs text-gray-300 font-mono uppercase tracking-wider font-semibold flex items-center gap-1.5">
+            {/* Live Hierarchy Indicator Banner */}
+            <div className="flex flex-wrap items-center gap-2 p-3 bg-cyber-bg/90 border border-cyber-cyan/30 rounded-xl text-xs font-mono shadow-inner">
+              <span className="text-gray-400">Saving inside:</span>
+              <span className="text-cyber-cyan font-bold bg-cyber-cyan/15 px-2.5 py-1 rounded border border-cyber-cyan/40 flex items-center gap-1.5 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
                 <Folder className="w-3.5 h-3.5 text-cyber-cyan" />
-                <span>1. Select or Create Main Topic</span>
-              </label>
+                Main: {customMainTopic.trim() || mainTopic}
+              </span>
+              <span className="text-gray-500">&gt;</span>
+              <span className="text-cyber-purple font-bold bg-cyber-purple/15 px-2.5 py-1 rounded border border-cyber-purple/40 flex items-center gap-1.5 shadow-[0_0_10px_rgba(217,70,239,0.15)]">
+                <Layers className="w-3.5 h-3.5 text-cyber-purple" />
+                Sub-Memory: {subtopic.trim() || "Your Sub-Memory Name"}
+              </span>
+            </div>
+
+            {/* 1. Main Topic Selector (Main Folder / Category) */}
+            <div className="flex flex-col gap-2.5 bg-cyber-bg/50 p-4 rounded-xl border border-cyber-cyan/20">
+              <div className="flex items-center justify-between flex-wrap gap-1">
+                <label className="text-xs text-cyber-cyan font-mono uppercase tracking-wider font-bold flex items-center gap-1.5">
+                  <Folder className="w-4 h-4 text-cyber-cyan" />
+                  <span>1. Choose Main Category / Folder (મુખ્ય વિષય)</span>
+                </label>
+                <span className="text-[11px] font-sans text-gray-400">
+                  Select existing or type a new one
+                </span>
+              </div>
 
               {/* Quick Topic Chips */}
               <div className="flex flex-wrap gap-2">
@@ -1162,13 +1185,19 @@ export default function MemoirDeckView({ memories = [], initialView = "create", 
                       setCustomMainTopic("");
                       playSynthChirp(440, 1.1, 0.04);
                     }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-all cursor-pointer ${
+                    className={`px-3.5 py-2 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                       mainTopic === t && !customMainTopic
-                        ? "bg-cyber-cyan/20 border border-cyber-cyan text-cyber-cyan font-bold shadow-[0_0_10px_rgba(6,182,212,0.2)]"
-                        : "bg-cyber-bg/80 border border-white/5 text-gray-400 hover:text-gray-200 hover:border-cyber-cyan/20"
+                        ? "bg-cyber-cyan/25 border-2 border-cyber-cyan text-white shadow-[0_0_12px_rgba(6,182,212,0.3)] scale-[1.02]"
+                        : "bg-cyber-bg/80 border border-white/10 text-gray-300 hover:text-white hover:border-cyber-cyan/30"
                     }`}
                   >
-                    {t}
+                    <span>📁</span>
+                    <span>{t}</span>
+                    {topicGroups[t]?.length > 0 && (
+                      <span className="text-[10px] px-1.5 py-0.2 bg-cyber-cyan/20 rounded text-cyber-cyan">
+                        {topicGroups[t].length}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -1179,40 +1208,64 @@ export default function MemoirDeckView({ memories = [], initialView = "create", 
                   type="text"
                   value={customMainTopic}
                   onChange={(e) => setCustomMainTopic(e.target.value)}
-                  placeholder="Or enter a new custom Main Topic (e.g., 'My School', 'College Memories', 'Family Tree')..."
-                  className="w-full bg-cyber-bg/70 border border-cyber-cyan/15 rounded-lg px-3.5 py-2 text-xs text-gray-200 focus:outline-none focus:border-cyber-cyan transition-all placeholder:text-gray-600 font-sans"
+                  placeholder="Or create a new Main Category (e.g., 'School', 'College', 'Hostel Life', 'Family Trips')..."
+                  className="w-full bg-cyber-bg/90 border border-cyber-cyan/25 focus:border-cyber-cyan rounded-lg px-3.5 py-2.5 text-xs text-gray-100 focus:outline-none transition-all placeholder:text-gray-500 font-sans"
                 />
               </div>
+
+              {/* Show list of sub-memories already inside this topic */}
+              {topicGroups[customMainTopic.trim() || mainTopic]?.length > 0 && (
+                <div className="pt-2 border-t border-white/5 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-mono text-gray-400">
+                    Existing sub-memories in "{customMainTopic.trim() || mainTopic}":
+                  </span>
+                  {topicGroups[customMainTopic.trim() || mainTopic].map((m, sIdx) => (
+                    <span
+                      key={sIdx}
+                      className="text-[10px] font-mono text-purple-300 bg-purple-950/40 border border-purple-500/30 px-2 py-0.5 rounded"
+                    >
+                      📄 {m.subtopic || m.title}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* 2. Subtopic Input */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs text-gray-300 font-mono uppercase tracking-wider font-semibold flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5 text-cyber-purple" />
-                <span>2. Branch / Subtopic Name (e.g. 10th Farewell Party, Sports Day)</span>
+            {/* 2. Sub-Memory Name / Event Title */}
+            <div className="flex flex-col gap-1.5 bg-cyber-bg/30 p-4 rounded-xl border border-cyber-purple/25">
+              <label className="text-xs text-cyber-purple font-mono uppercase tracking-wider font-bold flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-cyber-purple" />
+                <span>2. Sub-Memory Title / Event Name (સબ-મેમરીનું નામ)</span>
               </label>
+              <p className="text-[11px] text-gray-400 font-sans">
+                Each sub-memory will be neatly saved under "{customMainTopic.trim() || mainTopic}".
+              </p>
               <input
                 ref={subtopicInputRef}
                 type="text"
                 required
                 value={subtopic}
-                onChange={(e) => setSubtopic(e.target.value)}
-                placeholder="E.g., Sports Day 2022, 10th Farewell Party, Science Exhibition..."
-                className="bg-cyber-bg/70 border border-cyber-cyan/20 focus:border-cyber-purple rounded-lg px-4 py-2.5 text-sm text-gray-200 focus:outline-none transition-all placeholder:text-gray-500 font-sans"
+                onChange={(e) => {
+                  setSubtopic(e.target.value);
+                  if (!title || title === subtopic) {
+                    setTitle(e.target.value);
+                  }
+                }}
+                placeholder="E.g., 10th Farewell Party, Annual Sports Day 2022, Science Fair..."
+                className="bg-cyber-bg/80 border border-cyber-purple/40 focus:border-cyber-purple rounded-xl px-4 py-3 text-sm text-gray-100 focus:outline-none transition-all placeholder:text-gray-500 font-sans font-semibold shadow-inner"
               />
             </div>
 
-            {/* 3. Memory Title */}
+            {/* Optional Caption */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs text-gray-400 font-mono uppercase tracking-wider font-semibold">
-                Memory Title
+                Optional Sub-heading / Caption (વધારાનું હેડિંગ)
               </label>
               <input
                 type="text"
-                required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="E.g., Winning the 100m sprint race medal..."
+                placeholder="Optional: E.g., Farewell speech & medal distribution (defaults to sub-memory name)"
                 className="bg-cyber-bg/70 border border-cyber-cyan/15 rounded-lg px-4 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-cyber-cyan transition-all placeholder:text-gray-600 font-sans"
               />
             </div>
@@ -1475,9 +1528,10 @@ export default function MemoirDeckView({ memories = [], initialView = "create", 
             {/* Submit */}
             <button
               type="submit"
-              className="mt-3 w-full font-mono text-sm font-bold bg-gradient-to-r from-cyber-cyan to-cyber-purple border border-cyber-cyan/40 hover:border-cyber-cyan text-white py-3.5 rounded-xl hover:shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all uppercase tracking-wider cursor-pointer"
+              className="mt-3 w-full font-mono text-sm font-bold bg-gradient-to-r from-cyber-cyan to-cyber-purple border border-cyber-cyan/40 hover:border-cyber-cyan text-white py-3.5 rounded-xl hover:shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2"
             >
-              Save Memory Record to Deck
+              <span>💾</span>
+              <span>Save Sub-Memory to "{customMainTopic.trim() || mainTopic}" Deck</span>
             </button>
           </form>
         </div>
