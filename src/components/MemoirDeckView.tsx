@@ -31,6 +31,7 @@ import {
   Volume2,
   Calendar,
   Compass,
+  PenTool,
   AlertCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -61,6 +62,7 @@ export interface MemoryNode {
 
 interface MemoirDeckViewProps {
   memories?: MemoryNode[];
+  initialView?: "explorer" | "create";
   onAddMemory: (memory: {
     title: string;
     content: string;
@@ -103,9 +105,18 @@ const EMOTIONS = [
   { key: "melancholic", label: "Melancholic", color: "text-blue-400 border-blue-500/20", bg: "bg-blue-500" }
 ] as const;
 
-export default function MemoirDeckView({ memories = [], onAddMemory, onDeleteMemory }: MemoirDeckViewProps) {
-  // Navigation tabs: 'explorer' (Mind Map & Hierarchical Decks) vs 'create' (New Memory Form)
-  const [activeView, setActiveView] = useState<"explorer" | "create">("explorer");
+export default function MemoirDeckView({ memories = [], initialView = "create", onAddMemory, onDeleteMemory }: MemoirDeckViewProps) {
+  // Navigation tabs: 'create' (Input Memory Form) vs 'explorer' (Mind Map & Hierarchical Decks)
+  // Default to 'create' so the user is directly presented with the input form!
+  const [activeView, setActiveView] = useState<"explorer" | "create">(initialView || "create");
+
+  useEffect(() => {
+    if (initialView) {
+      setActiveView(initialView);
+    }
+  }, [initialView]);
+
+  const subtopicInputRef = useRef<HTMLInputElement | null>(null);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -476,91 +487,123 @@ export default function MemoirDeckView({ memories = [], onAddMemory, onDeleteMem
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6 pb-12">
       {/* Top Header & Tab Switcher */}
-      <div className="glass-panel border-cyber-cyan/15 rounded-2xl p-6 relative overflow-hidden tech-panel shadow-2xl">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-cyber-cyan/10 pb-5">
+      <div className="glass-panel border-cyber-cyan/15 rounded-2xl p-5 sm:p-6 relative overflow-hidden tech-panel shadow-2xl">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-cyber-cyan/10 pb-4">
           <div className="flex flex-col gap-1">
             <h2 className="text-xl font-bold text-cyber-cyan uppercase tracking-wider flex items-center gap-2.5 font-mono">
               <Layers className="w-6 h-6 text-cyber-cyan" />
               Hierarchical Memoir Decks
             </h2>
             <p className="text-xs text-gray-400">
-              Structured knowledge hierarchy &bull; Main Topics &bull; Branching Subtopics &bull; Media &bull; Voice Notes
+              Input stories, topics, subtopics, media, and voice notes &bull; 100% private in local storage
             </p>
           </div>
 
-          {/* View Toggles */}
-          <div className="flex items-center gap-2 bg-cyber-bg/80 border border-cyber-cyan/20 p-1.5 rounded-xl">
+          {/* Primary View Toggles: Input Form vs View/Explorer */}
+          <div className="flex items-center gap-2 bg-cyber-bg/90 border border-cyber-cyan/30 p-1.5 rounded-xl shadow-inner w-full sm:w-auto">
             <button
-              onClick={() => {
-                setActiveView("explorer");
-                playSynthChirp(440, 1.2, 0.05);
-              }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
-                activeView === "explorer"
-                  ? "bg-cyber-cyan/20 text-cyber-cyan border border-cyber-cyan shadow-[0_0_12px_rgba(6,182,212,0.2)]"
-                  : "text-gray-400 hover:text-gray-200"
-              }`}
-            >
-              <Compass className="w-4 h-4" />
-              Deck Explorer &amp; Mind Map
-            </button>
-
-            <button
+              type="button"
               onClick={() => {
                 setActiveView("create");
                 playSynthChirp(523, 1.2, 0.05);
               }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
                 activeView === "create"
-                  ? "bg-cyber-purple/25 text-cyber-purple border border-cyber-purple shadow-[0_0_12px_rgba(217,70,239,0.2)]"
-                  : "text-gray-400 hover:text-gray-200"
+                  ? "bg-gradient-to-r from-cyber-cyan to-cyber-purple text-white shadow-[0_0_15px_rgba(6,182,212,0.35)]"
+                  : "text-gray-300 hover:text-white hover:bg-white/5"
               }`}
             >
-              <Plus className="w-4 h-4" />
-              + Record New Memory
+              <Plus className="w-4 h-4 text-cyan-300" />
+              <span>✍️ Enter Memory (Input Form)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveView("explorer");
+                playSynthChirp(440, 1.2, 0.05);
+              }}
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                activeView === "explorer"
+                  ? "bg-cyber-cyan/25 text-cyber-cyan border border-cyber-cyan shadow-[0_0_15px_rgba(6,182,212,0.25)]"
+                  : "text-gray-300 hover:text-white hover:bg-white/5"
+              }`}
+            >
+              <Compass className="w-4 h-4 text-cyber-cyan" />
+              <span>🗺️ See All Memories &amp; Map ({memories.length})</span>
             </button>
           </div>
         </div>
 
-        {/* Live Search Bar with Instant Green / Red Feedback */}
-        <div className="mt-5 flex flex-col sm:flex-row items-center gap-3">
-          <div className="relative w-full">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-cyber-cyan/60" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search topics (e.g., 'School', 'Farewell', 'Sports Day', 'Family')..."
-              className="w-full pl-10 pr-10 py-2.5 bg-cyber-bg/80 border border-cyber-cyan/25 focus:border-cyber-cyan rounded-xl text-sm text-gray-200 placeholder:text-gray-500 font-sans focus:outline-none transition-all shadow-inner"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+        {/* Live Search Bar ONLY in Explorer/Viewing Mode */}
+        {activeView === "explorer" && (
+          <div className="mt-4 flex flex-col sm:flex-row items-center gap-3">
+            <div className="relative w-full">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-cyber-cyan/60" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search topics (e.g., 'School', 'Farewell', 'Sports Day', 'Family')..."
+                className="w-full pl-10 pr-10 py-2.5 bg-cyber-bg/80 border border-cyber-cyan/25 focus:border-cyber-cyan rounded-xl text-sm text-gray-200 placeholder:text-gray-500 font-sans focus:outline-none transition-all shadow-inner"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {searchQuery.trim() && (
+              <div className="flex items-center gap-2 shrink-0 text-xs font-mono">
+                <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-500/50 bg-emerald-950/40 text-emerald-400 font-semibold shadow-[0_0_10px_rgba(16,185,129,0.3)]">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  Green = Related Topic
+                </span>
+                <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-950/30 text-red-400 font-semibold shadow-[0_0_10px_rgba(239,68,68,0.2)]">
+                  <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                  Red = Unrelated
+                </span>
+              </div>
             )}
           </div>
-
-          {searchQuery.trim() && (
-            <div className="flex items-center gap-2 shrink-0 text-xs font-mono">
-              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-500/50 bg-emerald-950/40 text-emerald-400 font-semibold shadow-[0_0_10px_rgba(16,185,129,0.3)]">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                Green = Related Topic
-              </span>
-              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-950/30 text-red-400 font-semibold shadow-[0_0_10px_rgba(239,68,68,0.2)]">
-                <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                Red = Unrelated
-              </span>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       {/* VIEW 1: EXPLORER & MIND MAP */}
       {activeView === "explorer" && (
         <div className="space-y-6">
+          {/* Quick CTA to Enter Memory */}
+          <div className="bg-gradient-to-r from-cyber-cyan/15 via-cyber-purple/15 to-cyber-cyan/15 border border-cyber-cyan/35 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-[0_0_20px_rgba(6,182,212,0.15)]">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-cyber-cyan/20 border border-cyber-cyan/40 flex items-center justify-center shrink-0">
+                <PenTool className="w-5 h-5 text-cyber-cyan" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white font-mono uppercase tracking-wide">
+                  Ready to enter a new memory?
+                </h4>
+                <p className="text-xs text-gray-300 font-sans">
+                  Write down your school, family, or personal moments with subtopics, photos, PDF files, and voice notes.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveView("create");
+                playSynthChirp(523, 1.2, 0.05);
+              }}
+              className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-cyber-cyan to-cyber-purple text-white font-mono text-xs font-bold rounded-xl shadow-lg hover:shadow-cyber-cyan/30 transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              + Open Memory Input Form
+            </button>
+          </div>
           {/* Interactive Topic Dragging Mind Map Canvas */}
           <div className="glass-panel border-cyber-cyan/15 rounded-2xl p-5 relative overflow-hidden tech-panel shadow-2xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-cyber-cyan/10 pb-3 mb-4">
@@ -879,11 +922,12 @@ export default function MemoirDeckView({ memories = [], onAddMemory, onDeleteMem
                             setCustomMainTopic(topic);
                             setActiveView("create");
                             playSynthChirp(523, 1.2, 0.05);
+                            setTimeout(() => subtopicInputRef.current?.focus(), 150);
                           }}
-                          className="px-3 py-1 text-xs font-mono bg-cyber-cyan/10 hover:bg-cyber-cyan/20 border border-cyber-cyan/30 text-cyber-cyan rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+                          className="px-3 py-1.5 text-xs font-mono bg-cyber-cyan/20 hover:bg-cyber-cyan/30 border border-cyber-cyan text-cyber-cyan rounded-lg transition-all flex items-center gap-1.5 cursor-pointer font-bold shadow-[0_0_10px_rgba(6,182,212,0.2)]"
                         >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">Add Subtopic</span>
+                          <Plus className="w-3.5 h-3.5 text-cyber-cyan" />
+                          <span>+ Add Memory / Subtopic</span>
                         </button>
                         {isExpanded ? (
                           <ChevronDown className="w-5 h-5 text-gray-400" />
@@ -895,97 +939,121 @@ export default function MemoirDeckView({ memories = [], onAddMemory, onDeleteMem
 
                     {/* Subtopic Records Grid */}
                     {isExpanded && (
-                      <div className="p-4 sm:p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {subItems.map((sub, sIdx) => {
-                          const hasQuerySub = Boolean(searchQuery.trim());
-                          const isSubMatch = checkMemoryMatch(sub, searchQuery);
-
-                          let subBorder = "border-cyber-cyan/15";
-                          let subBg = "bg-cyber-bg/60";
-
-                          if (hasQuerySub) {
-                            if (isSubMatch) {
-                              subBorder = "border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]";
-                              subBg = "bg-emerald-950/40";
-                            } else {
-                              subBorder = "border-red-500/30";
-                              subBg = "bg-red-950/20 opacity-60";
-                            }
-                          }
-
-                          const emotionObj = EMOTIONS.find((e) => e.key === sub.emotion);
-
-                          return (
-                            <div
-                              key={sub._id || sub.id || sIdx}
+                      <div className="p-4 sm:p-5">
+                        {subItems.length === 0 ? (
+                          <div className="p-6 text-center flex flex-col items-center justify-center gap-2.5 bg-cyber-bg/40 rounded-xl border border-dashed border-cyber-cyan/20">
+                            <span className="text-xs font-mono text-gray-300">
+                              No records saved under "{topic}" yet.
+                            </span>
+                            <button
+                              type="button"
                               onClick={() => {
-                                setSelectedMemory(sub);
-                                playSynthChirp(650, 1.2, 0.04);
+                                setMainTopic(topic);
+                                setCustomMainTopic(topic);
+                                setActiveView("create");
+                                playSynthChirp(523, 1.2, 0.05);
+                                setTimeout(() => subtopicInputRef.current?.focus(), 150);
                               }}
-                              className={`rounded-xl border ${subBorder} ${subBg} p-4 flex flex-col justify-between gap-3 hover:border-cyber-cyan/40 transition-all cursor-pointer group`}
+                              className="px-4 py-2 text-xs font-mono font-bold bg-gradient-to-r from-cyber-cyan to-cyber-purple text-white rounded-xl shadow-lg hover:shadow-cyber-cyan/25 transition-all flex items-center gap-1.5 cursor-pointer"
                             >
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-xs font-mono font-bold text-cyber-purple bg-cyber-purple/10 px-2 py-0.5 rounded border border-cyber-purple/20 truncate">
-                                    Subtopic: {sub.subtopic || sub.title}
-                                  </span>
-                                  <span className={`text-[10px] font-sans px-2 py-0.5 rounded border ${emotionObj?.color || "text-cyan-400 border-cyan-500/20"}`}>
-                                    {sub.emotion}
-                                  </span>
-                                </div>
+                              <Plus className="w-3.5 h-3.5" />
+                              + Input First Memory in {topic}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {subItems.map((sub, sIdx) => {
+                              const hasQuerySub = Boolean(searchQuery.trim());
+                              const isSubMatch = checkMemoryMatch(sub, searchQuery);
 
-                                <h5 className="text-sm font-bold text-gray-200 group-hover:text-cyber-cyan transition-colors font-sans">
-                                  {sub.title}
-                                </h5>
+                              let subBorder = "border-cyber-cyan/15";
+                              let subBg = "bg-cyber-bg/60";
 
-                                <p className="text-xs text-gray-400 line-clamp-3 leading-relaxed font-sans">
-                                  {sub.content}
-                                </p>
-                              </div>
+                              if (hasQuerySub) {
+                                if (isSubMatch) {
+                                  subBorder = "border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]";
+                                  subBg = "bg-emerald-950/40";
+                                } else {
+                                  subBorder = "border-red-500/30";
+                                  subBg = "bg-red-950/20 opacity-60";
+                                }
+                              }
 
-                              {/* Media & Tags Footer */}
-                              <div className="space-y-2 pt-2 border-t border-white/5">
-                                {/* Media previews */}
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  {sub.voiceNote && (
-                                    <span className="flex items-center gap-1 text-[10px] font-mono text-cyan-300 bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-500/30">
-                                      <Volume2 className="w-3 h-3" /> Voice Note
-                                    </span>
-                                  )}
-                                  {sub.attachments &&
-                                    sub.attachments.map((att, aIdx) => (
-                                      <span
-                                        key={aIdx}
-                                        className="flex items-center gap-1 text-[10px] font-mono text-purple-300 bg-purple-950/40 px-2 py-0.5 rounded border border-purple-500/30 truncate max-w-[140px]"
-                                      >
-                                        {att.type === "image" && <ImageIcon className="w-3 h-3" />}
-                                        {att.type === "video" && <VideoIcon className="w-3 h-3" />}
-                                        {att.type === "file" && <FileText className="w-3 h-3" />}
-                                        {att.name}
+                              const emotionObj = EMOTIONS.find((e) => e.key === sub.emotion);
+
+                              return (
+                                <div
+                                  key={sub._id || sub.id || sIdx}
+                                  onClick={() => {
+                                    setSelectedMemory(sub);
+                                    playSynthChirp(650, 1.2, 0.04);
+                                  }}
+                                  className={`rounded-xl border ${subBorder} ${subBg} p-4 flex flex-col justify-between gap-3 hover:border-cyber-cyan/40 transition-all cursor-pointer group`}
+                                >
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-xs font-mono font-bold text-cyber-purple bg-cyber-purple/10 px-2 py-0.5 rounded border border-cyber-purple/20 truncate">
+                                        Subtopic: {sub.subtopic || sub.title}
                                       </span>
-                                    ))}
-                                </div>
+                                      <span className={`text-[10px] font-sans px-2 py-0.5 rounded border ${emotionObj?.color || "text-cyan-400 border-cyan-500/20"}`}>
+                                        {sub.emotion}
+                                      </span>
+                                    </div>
 
-                                <div className="flex items-center justify-between text-[10px] font-mono text-gray-500 pt-1">
-                                  <span>{sub.pointer?.split(" ")[1] || "DECK RECORD"}</span>
-                                  {onDeleteMemory && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onDeleteMemory(sub._id || sub.id || "");
-                                      }}
-                                      className="text-red-400/60 hover:text-red-300 transition-colors p-1"
-                                      title="Delete record"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
+                                    <h5 className="text-sm font-bold text-gray-200 group-hover:text-cyber-cyan transition-colors font-sans">
+                                      {sub.title}
+                                    </h5>
+
+                                    <p className="text-xs text-gray-400 line-clamp-3 leading-relaxed font-sans">
+                                      {sub.content}
+                                    </p>
+                                  </div>
+
+                                  {/* Media & Tags Footer */}
+                                  <div className="space-y-2 pt-2 border-t border-white/5">
+                                    {/* Media previews */}
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      {sub.voiceNote && (
+                                        <span className="flex items-center gap-1 text-[10px] font-mono text-cyan-300 bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-500/30">
+                                          <Volume2 className="w-3 h-3" /> Voice Note
+                                        </span>
+                                      )}
+                                      {sub.attachments &&
+                                        sub.attachments.map((att, aIdx) => (
+                                          <span
+                                            key={aIdx}
+                                            className="flex items-center gap-1 text-[10px] font-mono text-purple-300 bg-purple-950/40 px-2 py-0.5 rounded border border-purple-500/30 truncate max-w-[140px]"
+                                          >
+                                            {att.type === "image" && <ImageIcon className="w-3 h-3" />}
+                                            {att.type === "video" && <VideoIcon className="w-3 h-3" />}
+                                            {att.type === "file" && <FileText className="w-3 h-3" />}
+                                            {att.name}
+                                          </span>
+                                        ))}
+                                    </div>
+
+                                    <div className="flex items-center justify-between text-[10px] font-mono text-gray-500 pt-1">
+                                      <span>{sub.pointer?.split(" ")[1] || "DECK RECORD"}</span>
+                                      {onDeleteMemory && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onDeleteMemory(sub._id || sub.id || "");
+                                          }}
+                                          className="text-red-400/60 hover:text-red-300 transition-colors p-1"
+                                          title="Delete record"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
                                 </div>
-                              </div>
-                            </div>
-                          );
-                        })}
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -998,26 +1066,46 @@ export default function MemoirDeckView({ memories = [], onAddMemory, onDeleteMem
 
       {/* VIEW 2: CREATE RECORD FORM */}
       {activeView === "create" && (
-        <div className="glass-panel border-cyber-cyan/15 rounded-2xl p-6 md:p-8 relative overflow-hidden tech-panel shadow-2xl">
-          {/* Calibrator Prompt */}
-          <div className="bg-cyber-bg/75 border border-cyber-cyan/15 p-5 rounded-2xl flex flex-col gap-2.5 relative overflow-hidden mb-6 tech-panel">
-            <div className="absolute top-2 right-3 font-mono text-[9px] text-cyber-cyan/40">
-              PROMPT CALIBRATOR #{promptIndex + 1}
+        <div className="glass-panel border-cyber-cyan/15 rounded-2xl p-5 sm:p-6 md:p-8 relative overflow-hidden tech-panel shadow-2xl">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-cyber-cyan/15 pb-4 mb-5 gap-2">
+            <div>
+              <h3 className="text-lg font-bold text-white font-mono uppercase tracking-wider flex items-center gap-2">
+                <PenTool className="w-5 h-5 text-cyber-cyan" />
+                Record &amp; Input Memory
+              </h3>
+              <p className="text-xs text-gray-400 font-sans">
+                Fill in your topic, subtopic, story notes, photos, and voice note directly below:
+              </p>
             </div>
-            <span className="font-mono text-xs text-cyber-cyan uppercase tracking-wider flex items-center gap-1 font-semibold">
-              <HelpCircle className="w-4 h-4" />
-              Need Inspiration?
-            </span>
-            <p className="text-sm text-gray-200 font-sans italic leading-relaxed">
-              "{EXISTENTIAL_PROMPTS[promptIndex]}"
-            </p>
+            <button
+              type="button"
+              onClick={() => setActiveView("explorer")}
+              className="text-xs font-mono text-cyber-cyan hover:text-white flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-cyber-cyan/25 hover:border-cyber-cyan bg-cyber-cyan/10 transition-all cursor-pointer self-start sm:self-auto"
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>🗺️ See Mind Map &amp; Records ({memories.length})</span>
+            </button>
+          </div>
+
+          {/* Calibrator Prompt (Compact Inspiration Bar) */}
+          <div className="bg-cyber-bg/75 border border-cyber-cyan/15 px-4 py-2.5 rounded-xl flex items-center justify-between gap-3 text-xs tech-panel mb-5">
+            <div className="flex items-center gap-2 min-w-0">
+              <HelpCircle className="w-4 h-4 text-cyber-cyan shrink-0" />
+              <span className="font-mono text-[10px] text-cyber-cyan uppercase font-bold tracking-wider shrink-0">
+                Inspiration #{promptIndex + 1}:
+              </span>
+              <span className="text-gray-300 font-sans italic truncate">
+                "{EXISTENTIAL_PROMPTS[promptIndex]}"
+              </span>
+            </div>
             <button
               type="button"
               onClick={() => {
                 playSynthChirp(440, 1.2, 0.05);
                 setPromptIndex((prev) => (prev + 1) % EXISTENTIAL_PROMPTS.length);
               }}
-              className="text-xs text-cyber-cyan/85 hover:text-cyber-cyan font-semibold tracking-wide self-end mt-2 flex items-center gap-1 bg-cyber-cyan/5 border border-cyber-cyan/15 hover:border-cyber-cyan/35 px-3 py-1 rounded-xl transition-all cursor-pointer"
+              className="text-[11px] font-mono text-cyber-cyan hover:text-white bg-cyber-cyan/10 border border-cyber-cyan/20 px-2.5 py-1 rounded-lg shrink-0 cursor-pointer"
             >
               Next Question &gt;
             </button>
@@ -1099,17 +1187,18 @@ export default function MemoirDeckView({ memories = [], onAddMemory, onDeleteMem
 
             {/* 2. Subtopic Input */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs text-gray-400 font-mono uppercase tracking-wider font-semibold flex items-center gap-1.5">
+              <label className="text-xs text-gray-300 font-mono uppercase tracking-wider font-semibold flex items-center gap-1.5">
                 <Layers className="w-3.5 h-3.5 text-cyber-purple" />
-                <span>2. Branch / Subtopic Name</span>
+                <span>2. Branch / Subtopic Name (e.g. 10th Farewell Party, Sports Day)</span>
               </label>
               <input
+                ref={subtopicInputRef}
                 type="text"
                 required
                 value={subtopic}
                 onChange={(e) => setSubtopic(e.target.value)}
                 placeholder="E.g., Sports Day 2022, 10th Farewell Party, Science Exhibition..."
-                className="bg-cyber-bg/70 border border-cyber-cyan/15 rounded-lg px-4 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-cyber-cyan transition-all placeholder:text-gray-600 font-sans"
+                className="bg-cyber-bg/70 border border-cyber-cyan/20 focus:border-cyber-purple rounded-lg px-4 py-2.5 text-sm text-gray-200 focus:outline-none transition-all placeholder:text-gray-500 font-sans"
               />
             </div>
 
